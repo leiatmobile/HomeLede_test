@@ -1,0 +1,137 @@
+# 分阶段编译 - 避免超时
+# 如果单次编译还是超时，使用这个版本
+
+name: build openwrt 05 MultiStage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # 第一阶段：准备工具链
+  prepare:
+    name: 准备编译环境
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+      
+      - name: 初始化环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt update
+          sudo apt -y install build-essential ccache flex bison g++ gawk git gettext libncurses5-dev libssl-dev python3 rsync unzip zlib1g-dev file wget
+      
+      - name: 更新 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+      
+      - name: 生成配置
+        run: |
+          if [ -f "minimal.config" ]; then
+            cp minimal.config .config
+          fi
+          make defconfig
+          echo "CONFIG_CCACHE=y" >> .config
+          make defconfig
+      
+      - name: 下载依赖
+        run: |
+          make download -j8
+          find dl -size -1024c -exec rm -f {} \;
+      
+      - name: 编译工具链
+        run: |
+          make -j$(nproc) tools/install
+          make -j$(nproc) toolchain/install
+        timeout-minutes: 180
+      
+      - name: 打包工具链
+        run: |
+          tar -czf staging.tar.gz staging_dir/
+          tar -czf dl.tar.gz dl/
+      
+      - name: 上传工具链
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-toolchain
+          path: |
+            staging.tar.gz
+            dl.tar.gz
+            .config
+          retention-days: 1
+
+  # 第二阶段：编译固件
+  build:
+    name: 编译固件
+    needs: prepare
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+      
+      - name: 初始化环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt update
+          sudo apt -y install build-essential ccache flex bison g++ gawk git gettext libncurses5-dev libssl-dev python3 rsync unzip zlib1g-dev file wget
+      
+      - name: 下载工具链
+        uses: actions/download-artifact@v4
+        with:
+          name: openwrt-toolchain
+      
+      - name: 解压工具链
+        run: |
+          tar -xzf staging.tar.gz
+          tar -xzf dl.tar.gz
+      
+      - name: 更新 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+      
+      - name: 编译固件
+        run: |
+          make -j$(nproc) V=s
+        timeout-minutes: 300
+      
+      - name: 准备产物
+        run: |
+          mkdir -p ./artifact/firmware
+          cp -rf $(find ./bin/targets/ -type f) ./artifact/firmware/
+      
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_firmware
+          path: ./artifact/firmware/
+      
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: OpenWrt_$(date +"%Y%m%d_%H%M")
+          files: ./artifact/firmware/*
