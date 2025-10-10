@@ -7,9 +7,9 @@
 name: build openwrt 03
 
 on:
-  push:
-    branches:
-      - k5
+ # push:
+ #   branches:
+  #    - k5
   # schedule:
   #  - cron: 0 20 * * *
   workflow_dispatch:
@@ -191,4 +191,5 @@ jobs:
         env:
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
