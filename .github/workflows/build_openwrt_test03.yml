@@ -10,7 +10,7 @@ on:
   push:
     branches:
       - k5
-  schedule:
+  # schedule:
   #  - cron: 0 20 * * *
   workflow_dispatch:
 
@@ -191,3 +191,4 @@ jobs:
         env:
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
