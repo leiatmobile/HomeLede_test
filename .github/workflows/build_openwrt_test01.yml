@@ -11,7 +11,7 @@ on:
   push:
     branches:
       - master
-  schedule:
+  # schedule:
   #  - cron: 0 20 * * *
   workflow_dispatch:
 
@@ -185,3 +185,4 @@ jobs:
         env:
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
