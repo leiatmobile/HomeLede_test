@@ -10,7 +10,7 @@
 # luci-app-adguardhome（缺少 AdGuardHome 依赖）
 # 禁用循环依赖的包：luci-app-passwall2 strongswan
 
-name: OpenWrt-CI-ThreeStage
+name: OpenWrt-CI-ThreeStage B01
 
 on:
   workflow_dispatch:
@@ -466,4 +466,5 @@ jobs:
           echo "✓ 阶段 3: 编译固件"
           echo "======================================"
           echo "固件已上传到 Release!"
+
           echo "======================================"
