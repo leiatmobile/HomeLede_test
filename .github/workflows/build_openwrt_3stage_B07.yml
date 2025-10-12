@@ -6,7 +6,7 @@
 # 禁用包签名验证
 
 
-name: OpenWrt-CI-ThreeStage B06
+name: OpenWrt-CI-ThreeStage B07
 
 on:
   workflow_dispatch:
@@ -777,4 +777,5 @@ jobs:
           echo "✓ 阶段 3: 编译固件"
           echo "======================================"
           echo "固件已上传到 Release!"
+
           echo "======================================"
