@@ -1,0 +1,708 @@
+# 三阶段编译 OpenWrt - 更稳定，不会超时
+# Stage 1: 准备环境和下载依赖 (约1小时)
+# Stage 2: 编译工具链 (约2小时)
+# Stage 3: 编译固件 (约2小时)
+# 分阶段编译 MultiStage - 避免超时
+# 禁用包签名验证
+
+
+name: OpenWrt-CI-ThreeStage D02
+# 三阶段编译 OpenWrt - 优化版本
+# 修复镜像生成问题，优化构建流程
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - k5
+    paths:
+      - '.config'
+      - '**.config'
+      - 'feeds.conf.default'
+      - 'defconfig'
+
+permissions:
+  contents: write
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  TZ: Asia/Shanghai
+
+jobs:
+  # ==================== 阶段 1: 准备环境 ====================
+  stage1_prepare:
+    name: "阶段1: 准备环境和下载依赖"
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+      
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      
+      - name: 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 \
+          python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo \
+          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev python2 python-is-python3
+          
+          # 安装 GRUB 相关工具（x86_64 镜像必需）
+          sudo apt -y install grub-common grub-pc-bin grub-efi-amd64-bin grub2-common
+          
+          echo "✅ 编译依赖安装完成"
+          echo ""
+          echo "关键工具版本检查:"
+          qemu-img --version | head -1
+          mkisofs --version 2>&1 | head -1
+          grub-mkimage --version 2>&1 | head -1 || echo "⚠️ grub-mkimage 未找到"
+      
+      - name: 克隆 OpenWrt 源码
+        run: |
+          # 如果需要指定 OpenWrt 版本，在这里克隆
+          # git clone https://github.com/openwrt/openwrt.git openwrt
+          # cd openwrt
+          # git checkout openwrt-23.05
+          
+          # 如果代码已经在仓库中，跳过此步骤
+          echo "✅ 使用仓库中的 OpenWrt 源码"
+      
+      - name: 运行准备脚本
+        run: |
+          chmod +x prepareCompile.sh
+          ./prepareCompile.sh
+          echo "✅ prepareCompile.sh 执行完成"
+      
+      - name: 加载并增强配置文件
+        run: |
+          # 使用 defconfig
+          if [ -f "defconfig" ]; then
+            echo "使用 defconfig"
+            cp defconfig .config
+          else
+            echo "❌ 错误: defconfig 文件不存在"
+            exit 1
+          fi
+          
+          # 添加关键配置以确保生成所有镜像格式
+          cat >> .config <<'EOF'
+          
+          # ========== 关键配置 ==========
+          # 启用开发者选项
+          CONFIG_DEVEL=y
+          CONFIG_CCACHE=y
+          
+          # 禁用包签名验证（避免构建问题）
+          CONFIG_SIGNED_PACKAGES=n
+          
+          # 确保生成所有 x86_64 镜像格式
+          CONFIG_TARGET_IMAGES_GZIP=y
+          CONFIG_GRUB_IMAGES=y
+          CONFIG_GRUB_EFI_IMAGES=y
+          CONFIG_GRUB_CONSOLE=y
+          CONFIG_GRUB_TIMEOUT="3"
+          
+          # 生成各种虚拟化镜像
+          CONFIG_VDI_IMAGES=y
+          CONFIG_VHDX_IMAGES=y
+          CONFIG_VMDK_IMAGES=y
+          CONFIG_QCOW2_IMAGES=y
+          
+          # 设置镜像大小（单位：MB）
+          CONFIG_TARGET_KERNEL_PARTSIZE=32
+          CONFIG_TARGET_ROOTFS_PARTSIZE=1024
+          
+          # 禁用有问题的包
+          CONFIG_PACKAGE_luci-app-passwall2=n
+          CONFIG_PACKAGE_luci-app-adguardhome=n
+          CONFIG_PACKAGE_strongswan=n
+          
+          # ========== 结束配置 ==========
+          EOF
+          
+          # 生成完整配置
+          make defconfig
+          
+          echo "========== 配置已生成 =========="
+          echo "目标设备:"
+          grep "^CONFIG_TARGET" .config | head -10
+          echo ""
+          echo "镜像格式配置:"
+          grep -E "CONFIG_.*IMAGES=|CONFIG_TARGET_ROOTFS|CONFIG_GRUB" .config | grep -v "^#"
+          echo "================================"
+      
+      - name: 下载编译依赖包
+        run: |
+          echo "开始下载依赖包..."
+          make download -j16 V=s
+          
+          # 检查失败的下载
+          echo ""
+          echo "检查下载失败的文件:"
+          find dl -size -1024c -exec ls -l {} \; 2>/dev/null || echo "✅ 所有文件下载成功"
+          
+          # 删除失败的下载
+          find dl -size -1024c -exec rm -f {} \; 2>/dev/null || true
+          
+          echo "✅ 依赖包下载完成"
+      
+      - name: 打包 Stage 1 产物
+        run: |
+          echo "打包 feeds 和下载的文件..."
+          tar -czf feeds.tar.gz feeds/
+          tar -czf dl.tar.gz dl/
+          cp .config config.stage1
+          
+          echo "✅ Stage 1 打包完成"
+          echo "文件大小:"
+          ls -lh *.tar.gz config.stage1
+      
+      - name: 上传 Stage 1 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage1-output
+          path: |
+            feeds.tar.gz
+            dl.tar.gz
+            config.stage1
+          retention-days: 1
+          compression-level: 0
+      
+      - name: Stage 1 完成
+        run: |
+          echo "======================================"
+          echo "✅ 阶段 1 完成！"
+          echo "已上传: feeds, dl, config"
+          echo "======================================"
+          df -h
+
+  # ==================== 阶段 2: 编译工具链 ====================
+  stage2_toolchain:
+    name: "阶段2: 编译工具链"
+    needs: stage1_prepare
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+      
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+      
+      - name: 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 \
+          python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo \
+          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev python2 python-is-python3
+          
+          # 安装 GRUB 工具
+          sudo apt -y install grub-common grub-pc-bin grub-efi-amd64-bin grub2-common
+          
+          echo "✅ 编译依赖安装完成"
+      
+      - name: 下载 Stage 1 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: stage1-output
+          path: ./stage1/
+      
+      - name: 恢复 Stage 1 环境
+        run: |
+          echo "恢复 feeds..."
+          tar -xzf ./stage1/feeds.tar.gz
+          rm -f ./stage1/feeds.tar.gz
+          
+          echo "恢复 dl..."
+          tar -xzf ./stage1/dl.tar.gz
+          rm -f ./stage1/dl.tar.gz
+          
+          cp ./stage1/config.stage1 .config
+          
+          echo "✅ Stage 1 环境已恢复"
+          df -h
+      
+      - name: 编译 tools
+        run: |
+          echo "=========================================="
+          echo "开始编译 tools..."
+          echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "=========================================="
+          
+          make -j$(nproc) tools/install V=s 2>&1 | tee tools_build.log
+          
+          echo "✅ tools 编译完成"
+        timeout-minutes: 120
+      
+      - name: 编译 toolchain
+        run: |
+          echo "=========================================="
+          echo "开始编译 toolchain..."
+          echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "=========================================="
+          
+          make -j$(nproc) toolchain/install V=s 2>&1 | tee toolchain_build.log
+          
+          echo "✅ toolchain 编译完成"
+        timeout-minutes: 120
+      
+      - name: 预编译目标相关组件
+        run: |
+          echo "=========================================="
+          echo "预编译目标平台组件..."
+          echo "=========================================="
+          
+          # 确保镜像生成工具可用
+          mkdir -p staging_dir/host/bin/
+          
+          # 链接系统工具
+          for tool in qemu-img mkisofs genisoimage grub-mkimage; do
+            if command -v $tool >/dev/null 2>&1; then
+              TOOL_PATH=$(which $tool)
+              ln -sf "$TOOL_PATH" staging_dir/host/bin/$tool 2>/dev/null || true
+              echo "✅ $tool 已链接"
+            fi
+          done
+          
+          # 编译 target 相关基础组件
+          make -j$(nproc) target/compile V=s 2>&1 | tee target_compile.log || true
+          
+          echo "✅ 目标平台组件预编译完成"
+        timeout-minutes: 120
+      
+      - name: 上传编译日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-build-logs
+          path: |
+            tools_build.log
+            toolchain_build.log
+            target_compile.log
+          retention-days: 7
+      
+      - name: 打包 Stage 2 产物
+        run: |
+          echo "打包工具链和 staging 目录..."
+          
+          # 打包完整的 staging_dir
+          tar -czf staging_dir.tar.gz staging_dir/
+          
+          # 打包 build_dir/host
+          tar -czf build_dir_host.tar.gz build_dir/host/ 2>/dev/null || true
+          
+          # 打包 build_dir/target-*
+          if ls build_dir/target-* 1> /dev/null 2>&1; then
+            tar -czf build_dir_target.tar.gz build_dir/target-*/ 2>/dev/null || true
+          fi
+          
+          cp .config config.stage2
+          
+          echo "✅ Stage 2 打包完成"
+          ls -lh *.tar.gz
+      
+      - name: 上传 Stage 2 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-output
+          path: |
+            staging_dir.tar.gz
+            build_dir_host.tar.gz
+            build_dir_target.tar.gz
+            config.stage2
+          retention-days: 1
+          compression-level: 0
+      
+      - name: Stage 2 完成
+        run: |
+          echo "======================================"
+          echo "✅ 阶段 2 完成！"
+          echo "======================================"
+          df -h
+
+  # ==================== 阶段 3: 编译固件 ====================
+  stage3_firmware:
+    name: "阶段3: 编译固件"
+    needs: stage2_toolchain
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+      
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+      
+      - name: 安装编译依赖和镜像生成工具
+        run: |
+          sudo apt update
+          sudo apt -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 \
+          python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo \
+          uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev python2 python-is-python3
+          
+          # 安装 GRUB 和镜像工具（关键！）
+          sudo apt -y install grub-common grub-pc-bin grub-efi-amd64-bin grub2-common
+          
+          echo "✅ 所有依赖安装完成"
+          echo ""
+          echo "关键工具验证:"
+          qemu-img --version | head -1
+          grub-mkimage --version 2>&1 | head -1
+          mkisofs --version 2>&1 | head -1
+      
+      - name: 下载 Stage 1 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: stage1-output
+          path: ./stage1/
+      
+      - name: 下载 Stage 2 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: stage2-output
+          path: ./stage2/
+      
+      - name: 恢复完整编译环境
+        run: |
+          echo "恢复 Stage 1 环境..."
+          tar -xzf ./stage1/feeds.tar.gz && rm -f ./stage1/feeds.tar.gz
+          tar -xzf ./stage1/dl.tar.gz && rm -f ./stage1/dl.tar.gz
+          
+          echo "恢复 Stage 2 工具链..."
+          tar -xzf ./stage2/staging_dir.tar.gz && rm -f ./stage2/staging_dir.tar.gz
+          tar -xzf ./stage2/build_dir_host.tar.gz && rm -f ./stage2/build_dir_host.tar.gz
+          
+          if [ -f "./stage2/build_dir_target.tar.gz" ]; then
+            tar -xzf ./stage2/build_dir_target.tar.gz && rm -f ./stage2/build_dir_target.tar.gz
+          fi
+          
+          cp ./stage2/config.stage2 .config
+          
+          echo "✅ 编译环境已完全恢复"
+          df -h
+      
+      - name: 重新安装 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+      
+      - name: 配置镜像生成工具链接
+        run: |
+          echo "=========================================="
+          echo "配置镜像生成工具..."
+          echo "=========================================="
+          
+          mkdir -p staging_dir/host/bin/
+          
+          # 链接所有必需的工具
+          for tool in qemu-img mkisofs genisoimage grub-mkimage grub-bios-setup; do
+            if command -v $tool >/dev/null 2>&1; then
+              TOOL_PATH=$(which $tool)
+              ln -sf "$TOOL_PATH" staging_dir/host/bin/$tool
+              echo "✅ $tool 已链接: $TOOL_PATH"
+            else
+              echo "⚠️ 警告: $tool 未找到"
+            fi
+          done
+          
+          # 验证工具
+          echo ""
+          echo "验证工具可用性:"
+          staging_dir/host/bin/qemu-img --version | head -1 || echo "❌ qemu-img 不可用"
+          staging_dir/host/bin/grub-mkimage --version 2>&1 | head -1 || echo "❌ grub-mkimage 不可用"
+          
+          echo "=========================================="
+      
+      - name: 编译固件包
+        run: |
+          echo "=========================================="
+          echo "开始编译软件包..."
+          echo "=========================================="
+          
+          # 使用多核编译，失败后单核重试
+          make -j$(nproc) package/compile V=s 2>&1 | tee package_build.log || \
+          make -j1 package/compile V=s 2>&1 | tee -a package_build.log
+          
+          echo "✅ 软件包编译完成"
+          echo ""
+          
+          # 安装软件包
+          make -j$(nproc) package/install V=s 2>&1 | tee -a package_build.log
+          
+          echo "✅ 软件包安装完成"
+          echo ""
+          
+          # 验证并修复根文件系统目录结构
+          echo "验证根文件系统目录..."
+          ROOT_DIR=$(find ./build_dir/target-*/root-* -maxdepth 0 -type d 2>/dev/null | head -1)
+          
+          if [ -n "$ROOT_DIR" ]; then
+            echo "✓ 找到根文件系统: $ROOT_DIR"
+            
+            # 确保关键目录存在并设置正确权限
+            echo "创建必要的目录并设置权限..."
+            mkdir -p "$ROOT_DIR/tmp"
+            mkdir -p "$ROOT_DIR/var/lock"
+            mkdir -p "$ROOT_DIR/var/run"
+            
+            # 设置正确的权限
+            chmod 1777 "$ROOT_DIR/tmp"
+            chmod 755 "$ROOT_DIR/var/lock"
+            chmod 755 "$ROOT_DIR/var/run"
+            
+            echo "✓ 目录结构已修复"
+          else
+            echo "⚠️ 警告: 未找到根文件系统目录"
+          fi
+          
+          # 同时修复 root.orig 目录（如果存在）
+          for orig_dir in ./build_dir/target-*/root.orig-*; do
+            if [ -d "$orig_dir" ]; then
+              echo "修复: $orig_dir"
+              mkdir -p "$orig_dir/tmp"
+              mkdir -p "$orig_dir/var/lock"
+              chmod 1777 "$orig_dir/tmp"
+              chmod 755 "$orig_dir/var/lock"
+            fi
+          done
+          
+          echo "✅ 所有根文件系统目录已准备就绪"
+        timeout-minutes: 180
+      
+      - name: 编译固件镜像
+        id: compile_image
+        run: |
+          echo "=========================================="
+          echo "开始生成固件镜像..."
+          echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "=========================================="
+          
+          # 检查配置
+          echo "目标设备配置:"
+          grep "^CONFIG_TARGET" .config | head -5
+          echo ""
+          echo "镜像格式配置:"
+          grep -E "CONFIG_.*IMAGES=|CONFIG_GRUB|CONFIG_VDI|CONFIG_VMDK|CONFIG_QCOW2|CONFIG_VHDX" .config | grep "=y"
+          echo "=========================================="
+          
+          # 步骤 1: target/install
+          echo ""
+          echo "步骤 1/4: target/install"
+          make -j$(nproc) target/install V=s 2>&1 | tee target_build.log
+          
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "❌ target/install 失败"
+            tail -100 target_build.log
+            exit 1
+          fi
+          echo "✅ target/install 完成"
+          
+          # 步骤 2: package/index
+          echo ""
+          echo "步骤 2/4: package/index"
+          make -j$(nproc) package/index V=s 2>&1 | tee -a target_build.log
+          echo "✅ package/index 完成"
+          
+          # 步骤 3: 检查并强制生成镜像
+          echo ""
+          echo "步骤 3/4: 检查镜像文件"
+          
+          IMG_COUNT=$(find ./bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.vdi" -o -name "*.qcow2" -o -name "*.vhdx" \) 2>/dev/null | wc -l)
+          
+          if [ $IMG_COUNT -eq 0 ]; then
+            echo "⚠️ 未找到镜像，尝试强制生成..."
+            
+            # 强制重新生成镜像
+            make -j1 target/linux/install V=sc 2>&1 | tee -a target_build.log
+            
+            # 再次检查
+            IMG_COUNT=$(find ./bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.vdi" -o -name "*.qcow2" -o -name "*.vhdx" \) 2>/dev/null | wc -l)
+            
+            if [ $IMG_COUNT -eq 0 ]; then
+              echo "❌ 仍然没有生成镜像文件"
+              echo ""
+              echo "诊断信息:"
+              find ./bin/targets/ -type f 2>/dev/null || echo "bin/targets 目录为空"
+              echo ""
+              echo "检查 build_dir:"
+              find ./build_dir/target-*/linux-*/tmp/ -type f 2>/dev/null | head -20 || echo "tmp 目录为空"
+              exit 1
+            fi
+          fi
+          
+          echo "✅ 找到 $IMG_COUNT 个镜像文件"
+          
+          # 步骤 4: checksum
+          echo ""
+          echo "步骤 4/4: checksum"
+          make -j$(nproc) checksum V=s 2>&1 | tee -a target_build.log
+          echo "✅ checksum 完成"
+          
+          echo "=========================================="
+          echo "✅ 固件编译流程完成！"
+          echo "完成时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "=========================================="
+          
+          # 列出所有生成的文件
+          echo ""
+          echo "生成的文件列表:"
+          find ./bin/targets/ -type f 2>/dev/null | sort
+          
+          echo "status=success" >> $GITHUB_OUTPUT
+        timeout-minutes: 90
+      
+      - name: 上传编译日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-build-logs
+          path: |
+            package_build.log
+            target_build.log
+          retention-days: 7
+      
+      - name: 准备固件文件
+        id: prepare_firmware
+        run: |
+          mkdir -p ./firmware
+          
+          echo "======================================"
+          echo "收集固件文件..."
+          echo "======================================"
+          
+          FOUND_FILES=0
+          
+          # 查找所有镜像文件
+          for pattern in "*.img.gz" "*.vmdk" "*.vdi" "*.qcow2" "*.vhdx" "*.img"; do
+            for file in $(find ./bin/targets/ -type f -name "$pattern" 2>/dev/null); do
+              echo "找到: $file"
+              cp "$file" ./firmware/
+              FOUND_FILES=$((FOUND_FILES + 1))
+            done
+          done
+          
+          # 复制配置和信息文件
+          for file in $(find ./bin/targets/ -type f \( -name "*.manifest" -o -name "*.buildinfo" -o -name "sha256sums" -o -name "config.buildinfo" \) 2>/dev/null); do
+            cp "$file" ./firmware/
+          done
+          
+          echo "======================================"
+          if [ $FOUND_FILES -eq 0 ]; then
+            echo "❌ 错误: 未找到任何固件文件！"
+            echo "bin/targets 内容:"
+            ls -lhR ./bin/targets/ 2>/dev/null || echo "目录不存在"
+            exit 1
+          else
+            echo "✅ 找到 $FOUND_FILES 个固件文件"
+            echo "======================================"
+            echo "固件目录内容:"
+            ls -lh ./firmware/
+            echo "======================================"
+          fi
+          
+          FIRMWARE_NAME="OpenWrt_firmware_$(date +"%Y%m%d_%H%M")"
+          echo "firmware_name=${FIRMWARE_NAME}" >> $GITHUB_OUTPUT
+      
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare_firmware.outputs.firmware_name }}
+          path: ./firmware/
+      
+      - name: 生成 Release 信息
+        id: release_info
+        run: |
+          RELEASE_TAG="v$(date +"%Y.%m.%d-%H%M")"
+          RELEASE_NAME="OpenWrt 固件 $(date +"%Y年%m月%d日 %H:%M")"
+          
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
+          
+          cat > release.txt <<EOF
+          ## 🎉 OpenWrt 固件编译完成
+          
+          ### 📅 编译信息
+          - **编译时间**: $(date +"%Y年%m月%d日 %H:%M:%S")
+          - **编译分支**: k5
+          - **编译方式**: 三阶段编译
+          - **目标平台**: x86_64
+          
+          ### 📦 固件文件
+          \`\`\`
+          $(ls -lh ./firmware/ | tail -n +2)
+          \`\`\`
+          
+          ### 🎯 镜像格式说明
+          - **.img.gz**: 压缩的原始磁盘镜像（可用 dd 写入或解压后使用）
+          - **.vmdk**: VMware 虚拟机镜像
+          - **.vdi**: VirtualBox 虚拟机镜像  
+          - **.qcow2**: QEMU/KVM 虚拟机镜像
+          - **.vhdx**: Hyper-V 虚拟机镜像
+          
+          ### ✅ 编译成功！
+          EOF
+      
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release_info.outputs.release_tag }}
+          name: ${{ steps.release_info.outputs.release_name }}
+          body_path: release.txt
+          files: ./firmware/*
+      
+      - name: 清理旧的 Releases
+        uses: dev-drprasad/delete-older-releases@v0.3.2
+        if: success()
+        with:
+          keep_latest: 5
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Stage 3 完成
+        run: |
+          echo "======================================"
+          echo "🎉 所有阶段完成！"
+          echo "✅ 阶段 1: 准备环境"
+          echo "✅ 阶段 2: 编译工具链"
+          echo "✅ 阶段 3: 编译固件"
+          echo "======================================"
+          echo "固件已上传到 Release!"
+          echo "======================================"
