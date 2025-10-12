@@ -1,7 +1,7 @@
 # 三阶段编译 OpenWrt - 优化版本
 # 修复镜像生成问题，优化构建流程
 
-name: OpenWrt-CI-ThreeStage D06
+name: OpenWrt-CI-ThreeStage D01
 
 on:
   workflow_dispatch:
@@ -663,4 +663,5 @@ jobs:
           echo "✅ 阶段 3: 编译固件"
           echo "======================================"
           echo "固件已上传到 Release!"
+
           echo "======================================"
