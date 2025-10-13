@@ -100,39 +100,46 @@ jobs:
           
           # 添加关键配置以确保生成所有镜像格式
           cat >> .config <<'EOF'
-          
-          # ========== 关键配置 ==========
-          # 启用开发者选项
-          CONFIG_DEVEL=y
-          CONFIG_CCACHE=y
-          
-          # 禁用包签名验证（避免构建问题）
-          CONFIG_SIGNED_PACKAGES=n
-          
-          # 确保生成所有 x86_64 镜像格式
-          CONFIG_TARGET_IMAGES_GZIP=y
-          CONFIG_GRUB_IMAGES=y
-          CONFIG_GRUB_EFI_IMAGES=y
-          CONFIG_GRUB_CONSOLE=y
-          CONFIG_GRUB_TIMEOUT="3"
-          
-          # 生成各种虚拟化镜像
-          CONFIG_VDI_IMAGES=y
-          CONFIG_VHDX_IMAGES=y
-          CONFIG_VMDK_IMAGES=y
-          CONFIG_QCOW2_IMAGES=y
-          
-          # 设置镜像大小（单位：MB）
-          CONFIG_TARGET_KERNEL_PARTSIZE=32
-          CONFIG_TARGET_ROOTFS_PARTSIZE=1024
-          
-          # 禁用有问题的包
-          CONFIG_PACKAGE_luci-app-passwall2=n
-          CONFIG_PACKAGE_luci-app-adguardhome=n
-          CONFIG_PACKAGE_strongswan=n
-          
-          # ========== 结束配置 ==========
-          EOF
+
+# ========== 关键配置 ==========
+# 启用开发者选项
+CONFIG_DEVEL=y
+CONFIG_CCACHE=y
+
+# 禁用包签名验证（避免构建问题）
+CONFIG_SIGNED_PACKAGES=n
+
+# 确保生成所有 x86_64 镜像格式
+CONFIG_TARGET_IMAGES_GZIP=y
+CONFIG_GRUB_IMAGES=y
+CONFIG_GRUB_EFI_IMAGES=y
+CONFIG_GRUB_CONSOLE=y
+CONFIG_GRUB_TIMEOUT="3"
+
+# 生成各种虚拟化镜像
+CONFIG_VDI_IMAGES=y
+CONFIG_VHDX_IMAGES=y
+CONFIG_VMDK_IMAGES=y
+CONFIG_QCOW2_IMAGES=y
+
+# 确保内核支持虚拟化
+CONFIG_KVM_GUEST=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_VIRTIO_NET=y
+
+# 设置镜像大小（单位：MB）
+CONFIG_TARGET_KERNEL_PARTSIZE=32
+CONFIG_TARGET_ROOTFS_PARTSIZE=1024
+
+# 禁用有问题的包
+CONFIG_PACKAGE_luci-app-passwall2=n
+CONFIG_PACKAGE_luci-app-adguardhome=n
+CONFIG_PACKAGE_strongswan=n
+
+# ========== 结束配置 ==========
+EOF
           
           # 生成完整配置
           make defconfig
@@ -142,7 +149,7 @@ jobs:
           grep "^CONFIG_TARGET" .config | head -10
           echo ""
           echo "镜像格式配置:"
-          grep -E "CONFIG_.*IMAGES=|CONFIG_TARGET_ROOTFS|CONFIG_GRUB" .config | grep -v "^#"
+          grep -E "CONFIG_.*IMAGES=|CONFIG_GRUB|CONFIG_VDI|CONFIG_VMDK|CONFIG_QCOW2|CONFIG_VHDX" .config | grep "=y"
           echo "================================"
       
       - name: 下载编译依赖包
@@ -407,37 +414,37 @@ jobs:
       
       - name: 严格验证镜像生成工具
         run: |
-            echo "=========================================="
-            echo "严格验证镜像生成工具..."
-            echo "=========================================="
-            
-            # 必需工具列表
-            REQUIRED_TOOLS=("qemu-img" "grub-mkimage" "mkisofs")
-            MISSING_TOOLS=()
-            
-            for tool in "${REQUIRED_TOOLS[@]}"; do
-                if ! command -v $tool >/dev/null 2>&1; then
-                    MISSING_TOOLS+=("$tool")
-                    echo "❌ 缺失: $tool"
-                else
-                    echo "✅ $tool: $(which $tool)"
-                    $tool --version | head -1
-                fi
-            done
-            
-            if [ ${#MISSING_TOOLS[@]} -ne 0 ]; then
-                echo "❌ 错误: 以下必需工具缺失: ${MISSING_TOOLS[*]}"
-                echo "尝试安装..."
-                sudo apt update
-                sudo apt install -y qemu-utils grub-common grub-pc-bin grub-efi-amd64-bin genisoimage
+          echo "=========================================="
+          echo "严格验证镜像生成工具..."
+          echo "=========================================="
+          
+          # 必需工具列表
+          REQUIRED_TOOLS=("qemu-img" "grub-mkimage" "mkisofs")
+          MISSING_TOOLS=()
+          
+          for tool in "${REQUIRED_TOOLS[@]}"; do
+            if ! command -v $tool >/dev/null 2>&1; then
+              MISSING_TOOLS+=("$tool")
+              echo "❌ 缺失: $tool"
+            else
+              echo "✅ $tool: $(which $tool)"
+              $tool --version | head -1
             fi
-            
-            # 最终验证
-            echo ""
-            echo "最终工具验证:"
-            qemu-img --version && echo "✅ qemu-img 可用" || echo "❌ qemu-img 不可用"
-            grub-mkimage --version && echo "✅ grub-mkimage 可用" || echo "❌ grub-mkimage 不可用"
-            mkisofs --version && echo "✅ mkisofs 可用" || echo "❌ mkisofs 不可用"
+          done
+          
+          if [ ${#MISSING_TOOLS[@]} -ne 0 ]; then
+            echo "❌ 错误: 以下必需工具缺失: ${MISSING_TOOLS[*]}"
+            echo "尝试安装..."
+            sudo apt update
+            sudo apt install -y qemu-utils grub-common grub-pc-bin grub-efi-amd64-bin genisoimage
+          fi
+          
+          # 最终验证
+          echo ""
+          echo "最终工具验证:"
+          qemu-img --version && echo "✅ qemu-img 可用" || echo "❌ qemu-img 不可用"
+          grub-mkimage --version && echo "✅ grub-mkimage 可用" || echo "❌ grub-mkimage 不可用"
+          mkisofs --version && echo "✅ mkisofs 可用" || echo "❌ mkisofs 不可用"
       
       - name: 下载 Stage 1 产物
         uses: actions/download-artifact@v4
@@ -630,75 +637,180 @@ jobs:
             exit 1
           fi
       
+      - name: 专门修复 opkg 目录问题
+        run: |
+          echo "=========================================="
+          echo "专门修复 opkg 目录问题..."
+          echo "=========================================="
+          
+          # 查找所有可能的根文件系统目录
+          ROOT_DIRS=$(find ./build_dir/target-* -type d -name "root*" 2>/dev/null)
+          
+          if [ -z "$ROOT_DIRS" ]; then
+            echo "⚠️ 警告: 未找到任何根文件系统目录"
+            echo "创建默认目录结构..."
+            mkdir -p ./build_dir/target-x86_64_musl/root.orig-x86/tmp
+            mkdir -p ./build_dir/target-x86_64_musl/root.orig-x86/var/lock
+            chmod 1777 ./build_dir/target-x86_64_musl/root.orig-x86/tmp
+          else
+            echo "找到以下目录:"
+            echo "$ROOT_DIRS"
+            echo ""
+            
+            # 修复每个目录
+            while IFS= read -r dir; do
+              if [ -d "$dir" ]; then
+                echo "修复: $dir"
+                mkdir -p "$dir/tmp" "$dir/var/lock" "$dir/var/run"
+                chmod 1777 "$dir/tmp" 2>/dev/null || true
+                chmod 755 "$dir/var/lock" 2>/dev/null || true
+                
+                # 验证
+                if [ -d "$dir/tmp" ]; then
+                  PERM=$(stat -c "%a" "$dir/tmp" 2>/dev/null || echo "unknown")
+                  echo "  ✅ tmp 权限: $PERM"
+                else
+                  echo "  ❌ tmp 创建失败"
+                fi
+              fi
+            done <<< "$ROOT_DIRS"
+          fi
+          
+          echo "=========================================="
+          echo "opkg 目录修复完成"
+          echo "=========================================="
+      
       - name: 编译固件镜像 (增强版)
         id: compile_image
+        timeout-minutes: 120
         run: |
-            echo "=========================================="
-            echo "开始生成固件镜像 (增强版)..."
-            echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "=========================================="
-            
-            # 预检查
-            echo "预检查编译环境..."
-            if [ ! -d "./build_dir/target-x86_64_musl" ]; then
-                echo "❌ 错误: 目标平台目录不存在"
-                exit 1
+          echo "=========================================="
+          echo "开始生成固件镜像 (增强版)..."
+          echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo "=========================================="
+          
+          # 关键修复：在编译前确保所有必要的目录存在
+          echo "创建所有必要的临时目录..."
+          find ./build_dir/target-* -type d -name "root*" | while read root_dir; do
+            if [ -d "$root_dir" ]; then
+              echo "处理目录: $root_dir"
+              # 创建所有必需的目录
+              mkdir -p "$root_dir/tmp" "$root_dir/var/lock" "$root_dir/var/run" "$root_dir/var/tmp"
+              # 设置正确的权限
+              chmod 1777 "$root_dir/tmp" 2>/dev/null || true
+              chmod 1777 "$root_dir/var/tmp" 2>/dev/null || true
+              chmod 755 "$root_dir/var" 2>/dev/null || true
+              chmod 755 "$root_dir/var/lock" 2>/dev/null || true
+              chmod 755 "$root_dir/var/run" 2>/dev/null || true
+              # 验证
+              if [ -d "$root_dir/tmp" ]; then
+                echo "  ✅ $root_dir/tmp 创建成功"
+              else
+                echo "  ❌ $root_dir/tmp 创建失败"
+              fi
             fi
-            
-            # 关键修复：确保所有临时目录存在且权限正确
-            echo "修复根文件系统权限..."
-            find ./build_dir/target-* -type d -name "root*" | while read root_dir; do
-                if [ -d "$root_dir" ]; then
-                    mkdir -p "$root_dir/tmp" "$root_dir/var/lock" "$root_dir/var/run"
-                    chmod 1777 "$root_dir/tmp" 2>/dev/null || true
-                    chmod 755 "$root_dir/var" 2>/dev/null || true
-                fi
-            done
-            
-            # 分步骤编译，更好的错误处理
-            STEPS=(
-                "target/install"
-                "package/index" 
-                "target/linux/install"
-                "checksum"
-            )
-            
-            for step in "${STEPS[@]}"; do
-                echo ""
-                echo "执行: $step"
-                echo "------------------------------------------"
-                
-                if ! make -j$(nproc) "$step" V=s 2>&1 | tee -a enhanced_build.log; then
-                    echo "⚠️ $step 遇到错误，尝试单核重试..."
-                    if ! make -j1 "$step" V=sc 2>&1 | tee -a enhanced_build.log; then
-                        echo "❌ $step 失败"
-                        echo "最后错误信息:"
-                        tail -50 enhanced_build.log
-                        exit 1
-                    fi
-                fi
-                echo "✅ $step 完成"
-            done
-            
-            # 验证镜像生成
+          done
+          
+          # 特别处理 opkg 需要的目录
+          echo "专门处理 opkg 目录..."
+          for root_dir in ./build_dir/target-*/root.orig-*; do
+            if [ -d "$root_dir" ]; then
+              echo "创建 opkg 目录: $root_dir/tmp"
+              mkdir -p "$root_dir/tmp"
+              chmod 1777 "$root_dir/tmp"
+              # 验证权限
+              if [ -d "$root_dir/tmp" ]; then
+                PERM=$(stat -c "%a" "$root_dir/tmp" 2>/dev/null || echo "unknown")
+                echo "  ✅ 权限: $PERM"
+              fi
+            fi
+          done
+          
+          # 预检查
+          echo "预检查编译环境..."
+          if [ ! -d "./build_dir/target-x86_64_musl" ]; then
+            echo "❌ 错误: 目标平台目录不存在"
+            exit 1
+          fi
+          
+          # 分步骤编译，更好的错误处理
+          STEPS=(
+            "target/install"
+            "package/index" 
+            "target/linux/install"
+            "checksum"
+          )
+          
+          for step in "${STEPS[@]}"; do
             echo ""
-            echo "验证生成的镜像文件..."
-            IMG_FILES=$(find ./bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.vdi" -o -name "*.qcow2" -o -name "*.vhdx" \) 2>/dev/null)
+            echo "执行: $step"
+            echo "------------------------------------------"
             
-            if [ -z "$IMG_FILES" ]; then
-                echo "❌ 错误: 未生成任何镜像文件"
-                echo "诊断信息:"
-                find ./bin/targets/ -type f 2>/dev/null || echo "bin/targets 目录为空"
-                exit 1
+            # 在关键步骤前再次确保目录存在
+            if [[ "$step" == "target/linux/install" ]]; then
+              echo "关键步骤前确保目录权限..."
+              find ./build_dir/target-*/root.orig-* -type d -name "tmp" 2>/dev/null | while read tmp_dir; do
+                if [ -d "$(dirname "$tmp_dir")" ]; then
+                  mkdir -p "$tmp_dir"
+                  chmod 1777 "$tmp_dir"
+                  echo "  ✅ 确保: $tmp_dir"
+                fi
+              done
             fi
             
-            echo "✅ 生成的镜像文件:"
-            echo "$IMG_FILES"
-            IMG_COUNT=$(echo "$IMG_FILES" | wc -l)
-            echo "总共生成 $IMG_COUNT 个镜像文件"
-            
-            echo "status=success" >> $GITHUB_OUTPUT
-            timeout-minutes: 120
+            if ! make -j$(nproc) "$step" V=s 2>&1 | tee -a enhanced_build.log; then
+              echo "⚠️ $step 遇到错误，尝试单核重试..."
+              
+              # 单核重试前再次修复权限
+              if [[ "$step" == "target/linux/install" ]]; then
+                echo "重试前修复权限..."
+                for root_dir in ./build_dir/target-*/root.orig-*; do
+                  if [ -d "$root_dir" ]; then
+                    mkdir -p "$root_dir/tmp"
+                    chmod 1777 "$root_dir/tmp"
+                  fi
+                done
+              fi
+              
+              if ! make -j1 "$step" V=sc 2>&1 | tee -a enhanced_build.log; then
+                echo "❌ $step 失败"
+                echo "最后错误信息:"
+                tail -50 enhanced_build.log
+                
+                # 如果是 target/linux/install 失败，提供专门诊断
+                if [[ "$step" == "target/linux/install" ]]; then
+                  echo ""
+                  echo "target/linux/install 专门诊断:"
+                  echo "检查所有 root.orig-* 目录:"
+                  find ./build_dir/target-* -type d -name "root.orig-*" 2>/dev/null
+                  echo ""
+                  echo "检查 tmp 目录权限:"
+                  find ./build_dir/target-*/root.orig-* -name "tmp" -type d -exec ls -ld {} \; 2>/dev/null || echo "无 tmp 目录"
+                fi
+                exit 1
+              fi
+            fi
+            echo "✅ $step 完成"
+          done
+          
+          # 验证镜像生成
+          echo ""
+          echo "验证生成的镜像文件..."
+          IMG_FILES=$(find ./bin/targets/ -type f \( -name "*.img.gz" -o -name "*.vmdk" -o -name "*.vdi" -o -name "*.qcow2" -o -name "*.vhdx" \) 2>/dev/null)
+          
+          if [ -z "$IMG_FILES" ]; then
+            echo "❌ 错误: 未生成任何镜像文件"
+            echo "诊断信息:"
+            find ./bin/targets/ -type f 2>/dev/null || echo "bin/targets 目录为空"
+            exit 1
+          fi
+          
+          echo "✅ 生成的镜像文件:"
+          echo "$IMG_FILES"
+          IMG_COUNT=$(echo "$IMG_FILES" | wc -l)
+          echo "总共生成 $IMG_COUNT 个镜像文件"
+          
+          echo "status=success" >> $GITHUB_OUTPUT
       
       - name: 上传编译日志
         if: always()
@@ -708,7 +820,34 @@ jobs:
           path: |
             package_build.log
             target_build.log
+            enhanced_build.log
           retention-days: 7
+      
+      - name: 镜像生成诊断
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "镜像生成失败诊断"
+          echo "=========================================="
+          
+          echo "1. 检查目标目录:"
+          ls -la ./bin/targets/ 2>/dev/null || echo "bin/targets 不存在"
+          
+          echo ""
+          echo "2. 检查构建日志中的错误:"
+          grep -i "error\|failed\|cannot" target_build.log | tail -20 2>/dev/null || echo "无错误日志"
+          
+          echo ""
+          echo "3. 检查根文件系统:"
+          find ./build_dir -name "root*" -type d 2>/dev/null | head -10
+          
+          echo ""
+          echo "4. 检查工具链:"
+          ls -la staging_dir/host/bin/ | grep -E "qemu|grub|mkisofs" 2>/dev/null || echo "相关工具未找到"
+          
+          echo ""
+          echo "5. 磁盘空间检查:"
+          df -h
       
       - name: 准备固件文件
         id: prepare_firmware
@@ -820,26 +959,4 @@ jobs:
           echo "======================================"
           echo "固件已上传到 Release!"
           echo "======================================"
-          
-      - name: 镜像生成诊断
-        if: failure()
-        run: |
-            echo "=========================================="
-            echo "镜像生成失败诊断"
-            echo "=========================================="
-            
-            echo "1. 检查目标目录:"
-            ls -la ./bin/targets/ 2>/dev/null || echo "bin/targets 不存在"
-            
-            echo ""
-            echo "2. 检查构建日志中的错误:"
-            grep -i "error\|failed\|cannot" target_build.log | tail -20 2>/dev/null || echo "无错误日志"
-            
-            echo ""
-            echo "3. 检查根文件系统:"
-            find ./build_dir -name "root*" -type d 2>/dev/null | head -10
-            
-            echo ""
-            echo "4. 检查工具链:"
 
-            ls -la staging_dir/host/bin/ | grep -E "qemu|grub|mkisofs" 2>/dev/null || echo "相关工具未找到"
