@@ -406,7 +406,7 @@ jobs:
           mkisofs --version 2>&1 | head -1
       
       - name: 严格验证镜像生成工具
-          run: |
+        run: |
             echo "=========================================="
             echo "严格验证镜像生成工具..."
             echo "=========================================="
@@ -631,8 +631,8 @@ jobs:
           fi
       
       - name: 编译固件镜像 (增强版)
-          id: compile_image
-          run: |
+        id: compile_image
+        run: |
             echo "=========================================="
             echo "开始生成固件镜像 (增强版)..."
             echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -698,7 +698,7 @@ jobs:
             echo "总共生成 $IMG_COUNT 个镜像文件"
             
             echo "status=success" >> $GITHUB_OUTPUT
-          timeout-minutes: 120
+            timeout-minutes: 120
       
       - name: 上传编译日志
         if: always()
@@ -822,8 +822,8 @@ jobs:
           echo "======================================"
           
       - name: 镜像生成诊断
-          if: failure()
-          run: |
+        if: failure()
+        run: |
             echo "=========================================="
             echo "镜像生成失败诊断"
             echo "=========================================="
@@ -841,4 +841,5 @@ jobs:
             
             echo ""
             echo "4. 检查工具链:"
+
             ls -la staging_dir/host/bin/ | grep -E "qemu|grub|mkisofs" 2>/dev/null || echo "相关工具未找到"
